@@ -1,20 +1,25 @@
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Stack;
 
 /**
  * =========================================================================
- * MAIN CLASS - HotelBookingApp
+ * MAIN CLASS - HotelBookingAPP
  * =========================================================================
  *
- * Use Case 10: Booking Cancellation & Inventory Rollback
+ * Use Case 12: Data Persistence & System Recovery
  *
  * Description:
- * This class demonstrates how confirmed bookings can be safely cancelled.
- * It uses a Stack to track cancelled room IDs for LIFO rollback operations,
- * and ensures inventory is accurately restored.
+ * This class demonstrates how to save application state to a file using
+ * serialization, and how to recover it upon system restart using deserialization.
  *
- * @version 10.0
+ * @version 12.0
  */
 public class HotelBookingApp {
 
@@ -25,72 +30,39 @@ public class HotelBookingApp {
      */
     public static void main(String[] args) {
 
-        System.out.println("Booking Cancellation & Inventory Rollback");
+        System.out.println("Data Persistence & System Recovery\n");
+        String filename = "inventory.dat";
 
-        // Initialize inventory and cancellation service
-        RoomInventory inventory = new RoomInventory();
-        CancellationService cancellationService = new CancellationService();
+        // ==========================================
+        // STEP 1: Initialize System and Modify State
+        // ==========================================
+        System.out.println("--- System Running ---");
+        RoomInventory inventory1 = new RoomInventory();
+        System.out.println("Initial Single Rooms: " + inventory1.getAvailableCount("Single"));
 
-        // Test Case 1: Valid cancellation
-        String validBookingId = "Single-1";
-        cancellationService.cancelBooking(validBookingId, "Single", inventory);
+        // Modify state by booking a room
+        inventory1.bookRoom("Single");
 
-        // Test Case 2: Invalid cancellation
-        String invalidBookingId = "Invalid-99";
-        cancellationService.cancelBooking(invalidBookingId, "Single", inventory);
-    }
-}
+        // ==========================================
+        // STEP 2: Save State and Shut Down
+        // ==========================================
+        PersistenceService.saveState(inventory1, filename);
+        System.out.println("System shutting down...\n");
 
-/**
- * =========================================================================
- * CLASS - CancellationService
- * =========================================================================
- *
- * Description:
- * This class handles the safe cancellation of bookings.
- * It uses a Stack to model the LIFO (Last-In-First-Out) rollback behavior.
- */
-class CancellationService {
+        // ==========================================
+        // STEP 3: System Restart and Recovery
+        // ==========================================
+        System.out.println("--- System Restarting ---");
 
-    /** Tracks recently released room IDs. */
-    private Stack<String> cancelledRooms;
+        // Attempt to load the previously saved state into a NEW object
+        RoomInventory inventory2 = PersistenceService.loadState(filename);
 
-    /** Initializes the cancellation service. */
-    public CancellationService() {
-        cancelledRooms = new Stack<>();
-    }
-
-    /**
-     * Cancels a booking, adds it to the rollback stack, and restores inventory.
-     *
-     * @param bookingId the unique ID of the booking to cancel
-     * @param roomType the type of room being released
-     * @param inventory the centralized room inventory
-     */
-    public void cancelBooking(String bookingId, String roomType, RoomInventory inventory) {
-        if (isValidBooking(bookingId)) {
-            System.out.println("Cancelling Booking ID: " + bookingId);
-
-            // Push to rollback stack
-            cancelledRooms.push(bookingId);
-            System.out.println("Room " + bookingId + " has been added to the rollback stack.");
-
-            // Restore inventory
-            inventory.incrementInventory(roomType);
+        // Verify that the modified state was successfully recovered
+        if (inventory2 != null) {
+            System.out.println("Recovered Single Rooms: " + inventory2.getAvailableCount("Single"));
         } else {
-            System.out.println("Cancellation failed: Invalid Booking ID");
+            System.out.println("Failed to recover inventory state. Starting fresh.");
         }
-    }
-
-    /**
-     * Validates if the booking ID exists and is cancellable.
-     * * @param bookingId the booking ID to check
-     * @return true if valid, false otherwise
-     */
-    private boolean isValidBooking(String bookingId) {
-        // Mock validation: In a real system, this would check a database or map of active bookings.
-        // For this demonstration, we assume "Single-1" is our only active, valid booking.
-        return "Single-1".equals(bookingId);
     }
 }
 
@@ -100,10 +72,13 @@ class CancellationService {
  * =========================================================================
  *
  * Description:
- * Manages the available room counts. Provides methods to safely increment
- * the inventory when a room is released/cancelled.
+ * Manages the available room counts.
+ * MUST implement Serializable to allow its state to be written to a file.
  */
-class RoomInventory {
+class RoomInventory implements Serializable {
+
+    // Recommended for Serializable classes to verify version compatibility
+    private static final long serialVersionUID = 1L;
 
     /** Tracks available rooms by type. */
     private Map<String, Integer> availableRooms;
@@ -119,22 +94,75 @@ class RoomInventory {
     }
 
     /**
-     * Restores inventory for a specific room type upon cancellation.
+     * Books a room and decrements inventory.
      *
      * @param roomType the requested room type
      */
-    public void incrementInventory(String roomType) {
+    public void bookRoom(String roomType) {
         int currentCount = availableRooms.getOrDefault(roomType, 0);
-        availableRooms.put(roomType, currentCount + 1);
-        System.out.println("Restored inventory for room type: " + roomType);
+        if (currentCount > 0) {
+            availableRooms.put(roomType, currentCount - 1);
+            System.out.println("Booking successful. Decreased inventory for: " + roomType);
+        } else {
+            System.out.println("No " + roomType + " rooms available to book.");
+        }
     }
 
     /**
      * Gets the current availability count for a room type.
-     * * @param roomType the type of room
+     *
+     * @param roomType the type of room
      * @return the available count
      */
     public int getAvailableCount(String roomType) {
         return availableRooms.getOrDefault(roomType, 0);
+    }
+}
+
+/**
+ * =========================================================================
+ * CLASS - PersistenceService
+ * =========================================================================
+ *
+ * Description:
+ * Handles storing and retrieving system state from persistent storage
+ * using Java's built-in Object streams.
+ */
+class PersistenceService {
+
+    /**
+     * Serializes the RoomInventory object and writes it to a file.
+     *
+     * @param inventory the current state to save
+     * @param filename the destination file
+     */
+    public static void saveState(RoomInventory inventory, String filename) {
+        // try-with-resources automatically closes the output streams
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(filename))) {
+            oos.writeObject(inventory);
+            System.out.println("System state successfully saved to " + filename);
+        } catch (IOException e) {
+            System.out.println("Error saving state: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Reads a file and deserializes it back into a RoomInventory object.
+     *
+     * @param filename the file to read from
+     * @return the recovered RoomInventory object, or null if it fails
+     */
+    public static RoomInventory loadState(String filename) {
+        // try-with-resources automatically closes the input streams
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(filename))) {
+            RoomInventory inventory = (RoomInventory) ois.readObject();
+            System.out.println("System state successfully recovered from " + filename);
+            return inventory;
+        } catch (FileNotFoundException e) {
+            System.out.println("No previous state file found. A new system state will be initialized.");
+        } catch (IOException | ClassNotFoundException e) {
+            System.out.println("Error loading state: " + e.getMessage());
+        }
+        return null; // Return null so the main app knows recovery failed
     }
 }
