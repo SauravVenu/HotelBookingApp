@@ -1,131 +1,168 @@
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 
-
+/**
+ * =========================================================================
+ * MAIN CLASS - HotelBookingAPP
+ * =========================================================================
+ *
+ * Use Case 12: Data Persistence & System Recovery
+ *
+ * Description:
+ * This class demonstrates how to save application state to a file using
+ * serialization, and how to recover it upon system restart using deserialization.
+ *
+ * @version 12.0
+ */
 public class HotelBookingApp {
 
+    /**
+     * Application entry point.
+     *
+     * @param args Command-line arguments
+     */
     public static void main(String[] args) {
 
-        // Create Room objects (Domain Model)
-        Room singleRoom = new Room("Single", 1, 250, 1500.0);
-        Room doubleRoom = new Room("Double", 2, 400, 2500.0);
-        Room suiteRoom = new Room("Suite", 3, 750, 5000.0);
+        System.out.println("Data Persistence & System Recovery\n");
+        String filename = "inventory.dat";
 
-        // Initialize inventory with availability
-        RoomInventory inventory = new RoomInventory();
-        inventory.setRoomAvailability("Single", 5);
-        inventory.setRoomAvailability("Double", 3);
-        inventory.setRoomAvailability("Suite", 2);
+        // ==========================================
+        // STEP 1: Initialize System and Modify State
+        // ==========================================
+        System.out.println("--- System Running ---");
+        RoomInventory inventory1 = new RoomInventory();
+        System.out.println("Initial Single Rooms: " + inventory1.getAvailableCount("Single"));
 
-        // Create search service
-        RoomSearchService searchService = new RoomSearchService();
+        // Modify state by booking a room
+        inventory1.bookRoom("Single");
 
-        // Perform search (READ-ONLY)
-        searchService.searchAvailableRooms(
-                inventory,
-                singleRoom,
-                doubleRoom,
-                suiteRoom
-        );
+        // ==========================================
+        // STEP 2: Save State and Shut Down
+        // ==========================================
+        PersistenceService.saveState(inventory1, filename);
+        System.out.println("System shutting down...\n");
+
+        // ==========================================
+        // STEP 3: System Restart and Recovery
+        // ==========================================
+        System.out.println("--- System Restarting ---");
+
+        // Attempt to load the previously saved state into a NEW object
+        RoomInventory inventory2 = PersistenceService.loadState(filename);
+
+        // Verify that the modified state was successfully recovered
+        if (inventory2 != null) {
+            System.out.println("Recovered Single Rooms: " + inventory2.getAvailableCount("Single"));
+        } else {
+            System.out.println("Failed to recover inventory state. Starting fresh.");
+        }
     }
 }
 
 /**
- * ============================================================
- * CLASS - Room
- * ============================================================
- * Represents a room type with its details.
- */
-class Room {
-    private String type;
-    private int beds;
-    private int size;
-    private double price;
-
-    public Room(String type, int beds, int size, double price) {
-        this.type = type;
-        this.beds = beds;
-        this.size = size;
-        this.price = price;
-    }
-
-    public String getType() {
-        return type;
-    }
-
-    public int getBeds() {
-        return beds;
-    }
-
-    public int getSize() {
-        return size;
-    }
-
-    public double getPrice() {
-        return price;
-    }
-
-    public void displayDetails(int availability) {
-        System.out.println(type + " Room:");
-        System.out.println("Beds: " + beds);
-        System.out.println("Size: " + size + " sqft");
-        System.out.println("Price per night: " + price);
-        System.out.println("Available: " + availability);
-        System.out.println();
-    }
-}
-
-/**
- * ============================================================
+ * =========================================================================
  * CLASS - RoomInventory
- * ============================================================
- * Holds room availability (STATE HOLDER).
+ * =========================================================================
+ *
+ * Description:
+ * Manages the available room counts.
+ * MUST implement Serializable to allow its state to be written to a file.
  */
-class RoomInventory {
+class RoomInventory implements Serializable {
 
-    private Map<String, Integer> availability = new HashMap<>();
+    // Recommended for Serializable classes to verify version compatibility
+    private static final long serialVersionUID = 1L;
 
-    public void setRoomAvailability(String type, int count) {
-        availability.put(type, count);
+    /** Tracks available rooms by type. */
+    private Map<String, Integer> availableRooms;
+
+    /**
+     * Initializes inventory with a baseline count.
+     */
+    public RoomInventory() {
+        availableRooms = new HashMap<>();
+        availableRooms.put("Single", 5);
+        availableRooms.put("Double", 5);
+        availableRooms.put("Suite", 2);
     }
 
-    public Map<String, Integer> getRoomAvailability() {
-        return availability;
+    /**
+     * Books a room and decrements inventory.
+     *
+     * @param roomType the requested room type
+     */
+    public void bookRoom(String roomType) {
+        int currentCount = availableRooms.getOrDefault(roomType, 0);
+        if (currentCount > 0) {
+            availableRooms.put(roomType, currentCount - 1);
+            System.out.println("Booking successful. Decreased inventory for: " + roomType);
+        } else {
+            System.out.println("No " + roomType + " rooms available to book.");
+        }
+    }
+
+    /**
+     * Gets the current availability count for a room type.
+     *
+     * @param roomType the type of room
+     * @return the available count
+     */
+    public int getAvailableCount(String roomType) {
+        return availableRooms.getOrDefault(roomType, 0);
     }
 }
 
 /**
- * ============================================================
- * CLASS - RoomSearchService
- * ============================================================
+ * =========================================================================
+ * CLASS - PersistenceService
+ * =========================================================================
  *
- * Provides read-only search functionality.
+ * Description:
+ * Handles storing and retrieving system state from persistent storage
+ * using Java's built-in Object streams.
  */
-class RoomSearchService {
+class PersistenceService {
 
-    public void searchAvailableRooms(
-            RoomInventory inventory,
-            Room singleRoom,
-            Room doubleRoom,
-            Room suiteRoom) {
-
-        System.out.println("Room Search\n");
-
-        Map<String, Integer> availability = inventory.getRoomAvailability();
-
-        // Single Room
-        if (availability.get("Single") != null && availability.get("Single") > 0) {
-            singleRoom.displayDetails(availability.get("Single"));
+    /**
+     * Serializes the RoomInventory object and writes it to a file.
+     *
+     * @param inventory the current state to save
+     * @param filename the destination file
+     */
+    public static void saveState(RoomInventory inventory, String filename) {
+        // try-with-resources automatically closes the output streams
+        try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(filename))) {
+            oos.writeObject(inventory);
+            System.out.println("System state successfully saved to " + filename);
+        } catch (IOException e) {
+            System.out.println("Error saving state: " + e.getMessage());
         }
+    }
 
-        // Double Room
-        if (availability.get("Double") != null && availability.get("Double") > 0) {
-            doubleRoom.displayDetails(availability.get("Double"));
+    /**
+     * Reads a file and deserializes it back into a RoomInventory object.
+     *
+     * @param filename the file to read from
+     * @return the recovered RoomInventory object, or null if it fails
+     */
+    public static RoomInventory loadState(String filename) {
+        // try-with-resources automatically closes the input streams
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(filename))) {
+            RoomInventory inventory = (RoomInventory) ois.readObject();
+            System.out.println("System state successfully recovered from " + filename);
+            return inventory;
+        } catch (FileNotFoundException e) {
+            System.out.println("No previous state file found. A new system state will be initialized.");
+        } catch (IOException | ClassNotFoundException e) {
+            System.out.println("Error loading state: " + e.getMessage());
         }
-
-        // Suite Room
-        if (availability.get("Suite") != null && availability.get("Suite") > 0) {
-            suiteRoom.displayDetails(availability.get("Suite"));
-        }
+        return null; // Return null so the main app knows recovery failed
     }
 }
